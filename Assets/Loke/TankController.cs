@@ -115,9 +115,15 @@ public class TankController : MonoBehaviour
     [Range(0f, 1f)]
     [Tooltip("How much turn force falls off at max speed.\n" +
              "0 = same turn force at any speed.\n" +
-             "1 = almost no turning at max speed (old aggressive behaviour).\n" +
+             "1 = almost no turning at max speed.\n" +
              "0.6 = noticeable reduction but still effective at top speed.")]
     public float turnSpeedFalloff = 0.6f;
+
+    [Range(0f, 10f)]
+    [Tooltip("Forward speed (m/s) at which steering reaches full effectiveness. " +
+             "Below this speed turning scales down toward zero, so at a crawl the tank " +
+             "can barely rotate. ~3 m/s (~11 km/h) feels realistic for a wheeled vehicle.")]
+    public float fullSteerSpeedMS = 3f;
 
     // ── Visual Steering ───────────────────────────────────────────────────────
     [Header("Visual Steering")]
