@@ -29,11 +29,21 @@ public class WheelPoint
     [Tooltip("Visual wheel mesh to spin. Leave null if you have no mesh yet.")]
     public Transform mesh;
 
+    [Tooltip("Tick to make this wheel visually steer (rotate on Y axis with steering input).")]
+    public bool steerable = false;
+
+    [Tooltip("Tick to apply motor force to this wheel when throttle is pressed.")]
+    public bool driven = true;
+
+    [Tooltip("Tick to include this wheel in the differential turning torque. " +
+             "Fewer grounded differential wheels = weaker turning.")]
+    public bool differential = true;
+
     // Runtime state - do not set these in the Inspector
     [System.NonSerialized] public float spinAngle;
+    [System.NonSerialized] public float steerAngle;
     [System.NonSerialized] public bool  grounded;
     [System.NonSerialized] public float compression;
-    // Distance from anchor down to wheel centre (used for mesh placement)
     [System.NonSerialized] public float suspensionLength;
 }
 
@@ -102,13 +112,48 @@ public class TankController : MonoBehaviour
     [Tooltip("Allow pivot turn (spin on the spot) with no throttle.")]
     public bool allowPivotTurn = true;
 
-    // ── Brakes ────────────────────────────────────────────────────────────────
-    [Header("Brakes")]
-    [Tooltip("Braking force (N) while the brake key is held.")]
+    [Range(0f, 1f)]
+    [Tooltip("How much turn force falls off at max speed.\n" +
+             "0 = same turn force at any speed.\n" +
+             "1 = almost no turning at max speed (old aggressive behaviour).\n" +
+             "0.6 = noticeable reduction but still effective at top speed.")]
+    public float turnSpeedFalloff = 0.6f;
+
+    // ── Visual Steering ───────────────────────────────────────────────────────
+    [Header("Visual Steering")]
+    [Tooltip("Max angle (degrees) the steerable wheel meshes rotate when turning.")]
+    [Range(0f, 45f)]
+    public float maxSteerAngle = 25f;
+
+    [Tooltip("How quickly the steerable wheels rotate to the target angle. Higher = snappier.")]
+    [Range(1f, 20f)]
+    public float steerAngleSpeed = 8f;
+
+    [Range(0f, 1f)]
+    [Tooltip("How much lateral grip steerable wheels lose when fully turned. " +
+             "1 = no sideways grip at max steer angle (slides freely). " +
+             "0.5 = half grip at max angle. 0 = steer angle has no grip effect.")]
+    public float steerGripReduction = 0.6f;
+
+    // ── Brakes & Rolling ──────────────────────────────────────────────────────
+    [Header("Brakes and Rolling")]
+    [Tooltip("Braking force (N) applied when the brake key or S-as-brake is active.")]
     public float brakeForce = 20000f;
 
-    [Tooltip("Gentle braking force applied automatically when coasting (no input).")]
-    public float coastBrakeForce = 5000f;
+    [Tooltip("Speed (km/h) below which S switches from braking to reverse. " +
+             "Above this speed S only brakes.")]
+    public float brakeToReverseSpeedKph = 15f;
+
+    [Tooltip("Maximum rolling resistance force (N) applied at low speed when coasting. " +
+             "The actual force is scaled down at high speed by the curve below.")]
+    public float rollingResistance = 1200f;
+
+    [Range(0.1f, 5f)]
+    [Tooltip("How quickly resistance drops off as speed increases.\n" +
+             "1 = linear (same reduction across all speeds).\n" +
+             "2 = quadratic - coasts long at speed, scrubs off quickly when slow.\n" +
+             "Higher values = even more coast-friendly at high speed.")]
+    public float rollingResistanceCurve = 2f;
 
     // ── Lateral Friction ──────────────────────────────────────────────────────
     [Header("Lateral Friction")]
@@ -142,10 +187,11 @@ public class TankController : MonoBehaviour
     //  Private
     // ─────────────────────────────────────────────────────────────────────────
 
-    private Rigidbody  rb;
+    private Rigidbody    rb;
     private WheelPoint[] leftWheels;
     private WheelPoint[] rightWheels;
     private WheelPoint[] allWheels;
+    private float        currentSteer; // tracked each FixedUpdate, read in Update
 
     // ─────────────────────────────────────────────────────────────────────────
     //  Lifecycle
@@ -170,41 +216,91 @@ public class TankController : MonoBehaviour
 
     private void FixedUpdate()
     {
-        float throttle = 0f;
-        float steer    = 0f;
-        bool  braking  = false;
+        // ── Raw input ─────────────────────────────────────────────────────────
+        float forwardInput = 0f;
+        float backInput    = 0f;
+        float steer        = 0f;
+        bool  brakeKey     = false;
 
 #if ENABLE_INPUT_SYSTEM
         var kb = Keyboard.current;
         if (kb != null)
         {
-            throttle = (kb[forwardKey].isPressed ? 1f : 0f) - (kb[backKey].isPressed  ? 1f : 0f);
-            steer    = (kb[rightKey].isPressed   ? 1f : 0f) - (kb[leftKey].isPressed  ? 1f : 0f);
-            braking  =  kb[brakeKey].isPressed;
+            forwardInput = kb[forwardKey].isPressed ? 1f : 0f;
+            backInput    = kb[backKey].isPressed    ? 1f : 0f;
+            steer        = (kb[rightKey].isPressed  ? 1f : 0f) - (kb[leftKey].isPressed ? 1f : 0f);
+            brakeKey     = kb[this.brakeKey].isPressed;
         }
 #else
-        throttle = Input.GetAxis(throttleAxis);
-        steer    = Input.GetAxis(steerAxis);
-        braking  = Input.GetKey(brakeKey);
+        float rawAxis = Input.GetAxis(throttleAxis);
+        forwardInput  = Mathf.Max(0f,  rawAxis);
+        backInput     = Mathf.Max(0f, -rawAxis);
+        steer         = Input.GetAxis(steerAxis);
+        brakeKey      = Input.GetKey(this.brakeKey);
 #endif
-        steer *= turnSensitivity;
 
-        // Differential: left and right sides get independent drive throttle
-        float leftThrottle  = throttle + steer;
-        float rightThrottle = throttle - steer;
+        steer        *= turnSensitivity;
+        currentSteer  = steer;
 
-        if (!allowPivotTurn && Mathf.Abs(throttle) < 0.01f)
-            leftThrottle = rightThrottle = 0f;
+        // ── S key dual-purpose: brake above threshold, reverse below ──────────
+        float forwardSpeedMS  = Vector3.Dot(rb.linearVelocity, transform.forward);
+        float thresholdMS     = brakeToReverseSpeedKph / 3.6f;
 
-        bool isCoasting = Mathf.Abs(throttle) < 0.01f && Mathf.Abs(steer) < 0.01f;
-        float brake = braking ? brakeForce : isCoasting ? coastBrakeForce : 0f;
+        float throttle    = forwardInput;
+        float sBrake      = 0f;
 
-        float speed        = GetSpeedMS();
-        float speedRatio   = Mathf.Clamp01(speed / maxSpeed);
-        float torqueScalar = 1f - Mathf.Pow(speedRatio, accelerationCurveSharpness);
+        if (backInput > 0f)
+        {
+            if (forwardSpeedMS > thresholdMS)
+                sBrake  = brakeForce;   // moving forward fast enough: S = brake
+            else
+                throttle -= backInput;  // slow or stopped: S = reverse
+        }
 
-        ProcessWheelSide(leftWheels,  leftThrottle,  torqueScalar, brake);
-        ProcessWheelSide(rightWheels, rightThrottle, torqueScalar, brake);
+        // ── Brake force: dedicated brake key OR S-as-brake ────────────────────
+        float brake = brakeKey ? brakeForce : sBrake;
+
+        // ── Rolling resistance: replaces the hard coast brake ─────────────────
+        // Applied as a whole-body force so the tank glides to a natural stop.
+        // Resistance is highest at low speed and tapers off at high speed,
+        // so the tank coasts freely when fast but stops quickly from a crawl.
+        bool hasThrottle = Mathf.Abs(throttle) > 0.01f;
+        if (!hasThrottle && brake < 0.01f)
+        {
+            Vector3 flatVel   = Vector3.ProjectOnPlane(rb.linearVelocity, transform.up);
+            float   flatSpeed = flatVel.magnitude;
+            if (flatSpeed > 0.01f)
+            {
+                // Scale resistance by (1 - speedRatio)^curve so it nearly vanishes at high speed
+                float flatSpeedRatio   = Mathf.Clamp01(flatSpeed / maxSpeed);
+                float resistMultiplier = Mathf.Pow(1f - flatSpeedRatio, rollingResistanceCurve);
+                // Cap so resistance can never reverse the velocity in one step
+                float resistN = Mathf.Min(rollingResistance * resistMultiplier,
+                                          flatSpeed * rb.mass / Time.fixedDeltaTime);
+                rb.AddForce(-flatVel.normalized * resistN, ForceMode.Force);
+            }
+        }
+
+        // ── Speed scalars ─────────────────────────────────────────────────────
+        // Both use actual current speed so rolling at high speed still restricts
+        // driving and turning the same way as when actively accelerating at that speed.
+        float speed       = GetSpeedMS();
+        float speedRatio  = Mathf.Clamp01(speed / maxSpeed);
+        float driveScalar = 1f - Mathf.Pow(speedRatio, accelerationCurveSharpness);
+        float turnScalar  = 1f - speedRatio * turnSpeedFalloff;
+
+        // ── Forces ────────────────────────────────────────────────────────────
+        float driveForce = throttle * motorForce * driveScalar;
+        float diffForce  = steer   * turnForce  * turnScalar;
+
+        // Block pivot turning only when actually stationary (no throttle AND barely moving).
+        // If the tank is rolling at speed, turning is always allowed so you can steer while coasting.
+        bool isStationary = speed < 0.5f;
+        if (!allowPivotTurn && !hasThrottle && isStationary)
+            diffForce = 0f;
+
+        ProcessWheelSide(leftWheels,  driveForce,  diffForce, brake);
+        ProcessWheelSide(rightWheels, driveForce, -diffForce, brake);
     }
 
     private void Update()
@@ -217,8 +313,7 @@ public class TankController : MonoBehaviour
     //  Suspension + Drive per wheel
     // ─────────────────────────────────────────────────────────────────────────
 
-    private void ProcessWheelSide(WheelPoint[] wheels, float throttle,
-                                   float torqueScalar, float brake)
+    private void ProcessWheelSide(WheelPoint[] wheels, float driveForce, float diffForce, float brake)
     {
         foreach (var wp in wheels)
         {
@@ -254,10 +349,15 @@ public class TankController : MonoBehaviour
 
                 rb.AddForceAtPosition(transform.up * suspForce, origin, ForceMode.Force);
 
-                // ── Drive force ────────────────────────────────────────────
-                float   drive        = throttle * motorForce * torqueScalar;
                 Vector3 contactWorld = wp.anchor.position - transform.up * hit.distance;
-                rb.AddForceAtPosition(transform.forward * drive, contactWorld, ForceMode.Force);
+
+                // ── Drive force (only on driven wheels) ───────────────────
+                if (wp.driven)
+                    rb.AddForceAtPosition(transform.forward * driveForce, contactWorld, ForceMode.Force);
+
+                // ── Differential turning (only on differential wheels) ────
+                if (wp.differential)
+                    rb.AddForceAtPosition(transform.forward * diffForce, contactWorld, ForceMode.Force);
 
                 // ── Braking ────────────────────────────────────────────────
                 if (brake > 0f)
@@ -268,11 +368,19 @@ public class TankController : MonoBehaviour
                     rb.AddForceAtPosition(brakeVec, contactWorld, ForceMode.Force);
                 }
 
-                // ── Lateral friction (stops sideways sliding) ──────────────
+                // ── Lateral friction ───────────────────────────────────────
+                // Steerable wheels lose grip proportional to how much they are turned.
+                // A fully-turned wheel can slide sideways, letting the tank pivot naturally.
+                float latGrip = lateralFriction;
+                if (wp.steerable && maxSteerAngle > 0f)
+                {
+                    float steerFraction = Mathf.Abs(wp.steerAngle) / maxSteerAngle;
+                    latGrip *= 1f - steerFraction * steerGripReduction;
+                }
+
                 Vector3 pointVel = rb.GetPointVelocity(contactWorld);
                 float   latSpeed = Vector3.Dot(pointVel, transform.right);
-                Vector3 latForce = -transform.right * (latSpeed * lateralFriction
-                                   * rb.mass / allWheels.Length);
+                Vector3 latForce = -transform.right * (latSpeed * latGrip * rb.mass / allWheels.Length);
                 rb.AddForceAtPosition(latForce, contactWorld, ForceMode.Force);
             }
             else
@@ -293,16 +401,25 @@ public class TankController : MonoBehaviour
         if (wp?.mesh == null || wp.anchor == null) return;
 
         // Position: offset downward from the anchor by the current suspension length.
-        // Using anchor.position (not a stored contact point) means the mesh always
-        // moves correctly with the hull every frame, with no physics-timing lag.
+        // Anchored to anchor.position each frame so the wheel always moves with the hull.
         wp.mesh.position = wp.anchor.position - transform.up * wp.suspensionLength;
 
-        // Rotation: spin around the wheel's local X axis based on forward speed.
+        // Spin: accumulate rotation based on forward speed
         float fwdSpeed        = Vector3.Dot(rb.linearVelocity, transform.forward);
         float degreesPerMeter = 360f / (2f * Mathf.PI * wheelRadius);
         wp.spinAngle         += fwdSpeed * degreesPerMeter * Time.deltaTime;
 
-        wp.mesh.rotation = transform.rotation * Quaternion.Euler(wp.spinAngle, 0f, 0f);
+        // Visual steering: smoothly rotate steerable wheels toward the target steer angle
+        if (wp.steerable)
+        {
+            float targetSteer = currentSteer * maxSteerAngle;
+            wp.steerAngle     = Mathf.Lerp(wp.steerAngle, targetSteer, steerAngleSpeed * Time.deltaTime);
+        }
+
+        // Apply rotation: body yaw -> steer angle (Y) -> wheel spin (X)
+        wp.mesh.rotation = transform.rotation
+                         * Quaternion.Euler(0f, wp.steerAngle, 0f)
+                         * Quaternion.Euler(wp.spinAngle, 0f, 0f);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
