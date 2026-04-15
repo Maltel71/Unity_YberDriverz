@@ -11,28 +11,22 @@ using UnityEngine.VFX;
 //  MachineGunController.cs  -  Unity 6
 //
 //  Configurable raycast machine gun that supports multiple barrels / shoot points.
-//  Each shoot point fires in sequence (barrel cycling). Every shoot point
-//  should have its muzzle-flash ParticleSystem placed directly on it.
+//  Each shoot point fires in sequence (barrel cycling).
 //
-//  Setup:
-//    1. Attach this script to any GameObject (e.g. the turret or gun mount).
-//    2. Create one or more empty GameObjects at each gun barrel tip.
-//       Add a muzzle-flash ParticleSystem directly onto each of those objects.
-//    3. Assign all barrel shoot-point Transforms in the Shoot Points array.
-//    4. Assign the hull Rigidbody for recoil.
-//    5. Optionally assign impact / explosion VFX prefabs and an AudioSource.
+//  Audio uses a pool of AudioSources so the last N shots keep their tail.
+//  When a new shot is fired and all pool slots are busy, the oldest one gets
+//  cut and reused. Adjust Audio Tail Count to change how many tails overlap.
 //
 //  Multiple guns on one tank:
-//    Add one MachineGunController per gun mount (e.g. turret MG + hull MG).
-//    Each instance has its own fire rate, damage, and shoot points - fully
-//    independent. Just assign different shoot points and fire keys.
+//    Add one MachineGunController per gun mount.
+//    Each instance has its own fire rate, damage, and shoot points.
 // =============================================================================
 
 [System.Serializable]
 public class MGShootPoint
 {
     [Tooltip("Empty GameObject at the barrel tip. " +
-             "The muzzle-flash ParticleSystem should be on this object.")]
+             "The muzzle-flash VFX should be on this object.")]
     public Transform transform;
 
     [Tooltip("Muzzle flash Visual Effect. Leave empty to auto-find on the Transform above.")]
@@ -49,9 +43,7 @@ public class MachineGunController : MonoBehaviour
     [Tooltip("Add one entry per barrel. Barrels fire in strict sequence and cycle back:\n" +
              "1 barrel  → fires repeatedly from barrel 1.\n" +
              "2 barrels → barrel 1, barrel 2, barrel 1, barrel 2...\n" +
-             "3 barrels → 1, 2, 3, 1, 2, 3...\n" +
-             "Fire Rate is the total rate across all barrels, so each barrel " +
-             "fires at (fireRate / barrelCount) individually.")]
+             "Fire Rate is the total rate across all barrels.")]
     public MGShootPoint[] shootPoints;
 
     // ── Raycast ───────────────────────────────────────────────────────────────
@@ -64,59 +56,54 @@ public class MachineGunController : MonoBehaviour
 
     // ── Damage ────────────────────────────────────────────────────────────────
     [Header("Damage")]
-    [Tooltip("Damage per bullet sent via SendMessage(\"TakeDamage\", damage) " +
-             "to the hit object. Requires a TakeDamage(float) method on the target.")]
+    [Tooltip("Damage per bullet sent via SendMessage(\"TakeDamage\", damage).")]
     public float damage = 15f;
 
     // ── Impact & Explosion ────────────────────────────────────────────────────
     [Header("Impact and Explosion")]
-    [Tooltip("Radius around the hit point for area damage and force. " +
-             "0 = point hit only.")]
+    [Tooltip("Radius around the hit point for area damage and force. 0 = point hit only.")]
     public float impactRadius = 0f;
 
-    [Tooltip("Outward force applied to Rigidbodies within impactRadius. " +
-             "0 = no physics push.")]
+    [Tooltip("Outward force applied to Rigidbodies within impactRadius. 0 = no push.")]
     public float explosionForce = 0f;
 
-    [Tooltip("Upward bias for the explosion force. 1 = standard kick. 0 = purely outward.")]
     [Range(0f, 3f)]
+    [Tooltip("Upward bias for the explosion force.")]
     public float explosionUpwardModifier = 0.5f;
 
-    [Tooltip("Visual Effect instantiated at the hit point (e.g. sparks / dust). " +
-             "Leave empty for no impact VFX.")]
+    [Tooltip("Visual Effect instantiated at the hit point. Leave empty for none.")]
     public VisualEffect impactVFXPrefab;
 
-    [Tooltip("How long before the impact VFX is destroyed after playing (seconds).")]
+    [Tooltip("How long before the impact VFX is destroyed (seconds).")]
     public float impactVFXLifetime = 1f;
 
     [Tooltip("Enable a separate explosion VFX when impactRadius > 0.")]
     public bool useExplosionVFX = false;
 
-    [Tooltip("Explosion Visual Effect instantiated at the hit point when useExplosionVFX is true.")]
+    [Tooltip("Explosion VFX instantiated at the hit point when useExplosionVFX is true.")]
     public VisualEffect explosionVFXPrefab;
 
-    [Tooltip("How long before the explosion VFX is destroyed after playing (seconds).")]
+    [Tooltip("How long before the explosion VFX is destroyed (seconds).")]
     public float explosionVFXLifetime = 2f;
 
     // ── Fire Rate ─────────────────────────────────────────────────────────────
     [Header("Fire Rate")]
-    [Tooltip("Rounds per second. 10 = fast MG, 3 = slow cannon-style auto.")]
     [Range(0.5f, 30f)]
+    [Tooltip("Rounds per second across all barrels.")]
     public float fireRate = 10f;
 
     // ── Recoil ────────────────────────────────────────────────────────────────
     [Header("Recoil")]
-    [Tooltip("Rigidbody that receives the recoil impulse per shot (usually the tank hull). " +
-             "Leave empty to auto-find on this GameObject or its parents.")]
+    [Tooltip("Rigidbody that receives the recoil impulse. Leave empty to auto-find.")]
     public Rigidbody recoilBody;
 
-    [Tooltip("Recoil impulse force (N*s) applied backwards along the barrel per shot. " +
-             "Keep this low for machine guns - it adds up fast at high fire rates.")]
+    [Tooltip("Recoil impulse (N*s) per shot along the barrel.")]
     public float recoilForce = 200f;
 
     // ── Audio ─────────────────────────────────────────────────────────────────
     [Header("Audio")]
-    [Tooltip("AudioSource for firing sounds. Leave empty to auto-find on this GameObject.")]
+    [Tooltip("The primary AudioSource. Spatial blend and mixer settings are copied " +
+             "to the extra pool sources automatically.")]
     public AudioSource audioSource;
 
     [Tooltip("Sound played each time a round fires.")]
@@ -124,6 +111,12 @@ public class MachineGunController : MonoBehaviour
 
     [Range(0f, 1f)]
     public float fireSoundVolume = 0.8f;
+
+    [Range(1, 8)]
+    [Tooltip("How many shot tails can overlap at once. " +
+             "3 means the last 3 shots keep their full tail; the 4th cuts the oldest.\n" +
+             "Extra AudioSources are created automatically at startup.")]
+    public int audioTailCount = 3;
 
     // ── Input ─────────────────────────────────────────────────────────────────
     [Header("Input")]
@@ -145,9 +138,12 @@ public class MachineGunController : MonoBehaviour
     //  Private
     // ─────────────────────────────────────────────────────────────────────────
 
-    private float   nextFireTime   = 0f;
-    private int     currentBarrel  = 0;   // index into shootPoints, cycles each shot
-    private bool    isFiring       = false;
+    private float         nextFireTime  = 0f;
+    private int           currentBarrel = 0;
+    private bool          isFiring      = false;
+
+    private AudioSource[] audioPool;
+    private int           audioPoolIndex = 0;
 
     // ─────────────────────────────────────────────────────────────────────────
     //  Lifecycle
@@ -155,7 +151,7 @@ public class MachineGunController : MonoBehaviour
 
     private void Start()
     {
-        // Auto-resolve muzzle VFX on each shoot point
+        // Auto-resolve muzzle VFX
         if (shootPoints != null)
         {
             foreach (var sp in shootPoints)
@@ -170,6 +166,31 @@ public class MachineGunController : MonoBehaviour
 
         if (recoilBody == null)
             recoilBody = GetComponentInParent<Rigidbody>();
+
+        // Build audio pool: reuse the assigned AudioSource as slot 0,
+        // then add extra components copying its spatial / mixer settings.
+        audioTailCount = Mathf.Max(1, audioTailCount);
+        audioPool      = new AudioSource[audioTailCount];
+        audioPool[0]   = audioSource;
+
+        for (int i = 1; i < audioTailCount; i++)
+        {
+            AudioSource extra = gameObject.AddComponent<AudioSource>();
+
+            if (audioSource != null)
+            {
+                extra.outputAudioMixerGroup = audioSource.outputAudioMixerGroup;
+                extra.spatialBlend          = audioSource.spatialBlend;
+                extra.minDistance           = audioSource.minDistance;
+                extra.maxDistance           = audioSource.maxDistance;
+                extra.rolloffMode           = audioSource.rolloffMode;
+                extra.dopplerLevel          = audioSource.dopplerLevel;
+                extra.spread                = audioSource.spread;
+            }
+
+            extra.playOnAwake = false;
+            audioPool[i]      = extra;
+        }
     }
 
     private void Update()
@@ -188,9 +209,6 @@ public class MachineGunController : MonoBehaviour
     {
         if (shootPoints == null || shootPoints.Length == 0) return;
 
-        // Pick the current barrel and advance the index for next shot.
-        // This gives strict alternation: barrel 0 → barrel 1 → barrel 0 → ...
-        // Never two barrels fire at the same time.
         currentBarrel = currentBarrel % shootPoints.Length;
         MGShootPoint sp = shootPoints[currentBarrel];
 
@@ -210,8 +228,18 @@ public class MachineGunController : MonoBehaviour
         }
 
         // ── Fire sound ────────────────────────────────────────────────────────
-        if (audioSource != null && fireSound != null)
-            audioSource.PlayOneShot(fireSound, fireSoundVolume);
+        // Grab the next pool slot. If it is still playing (from audioTailCount
+        // shots ago) it gets cut here - all more-recent shots keep their tail.
+        if (audioPool != null && fireSound != null)
+        {
+            AudioSource src = audioPool[audioPoolIndex];
+            audioPoolIndex  = (audioPoolIndex + 1) % audioPool.Length;
+
+            src.Stop();
+            src.clip   = fireSound;
+            src.volume = fireSoundVolume;
+            src.Play();
+        }
 
         // ── Recoil ────────────────────────────────────────────────────────────
         if (recoilBody != null)
@@ -228,7 +256,6 @@ public class MachineGunController : MonoBehaviour
             HandleImpact(hit);
         }
 
-        // Advance to next barrel
         currentBarrel = (currentBarrel + 1) % shootPoints.Length;
     }
 
@@ -240,11 +267,9 @@ public class MachineGunController : MonoBehaviour
     {
         Vector3 hitPoint = hit.point;
 
-        // ── Direct hit damage ─────────────────────────────────────────────────
         hit.collider.SendMessageUpwards("TakeDamage", damage,
                                         SendMessageOptions.DontRequireReceiver);
 
-        // ── Area effect ───────────────────────────────────────────────────────
         if (impactRadius > 0f)
         {
             Collider[] nearby = Physics.OverlapSphere(hitPoint, impactRadius, hitLayers);
@@ -264,7 +289,6 @@ public class MachineGunController : MonoBehaviour
             }
         }
 
-        // ── Impact VFX ────────────────────────────────────────────────────────
         if (impactVFXPrefab != null)
         {
             VisualEffect fx = Instantiate(impactVFXPrefab, hitPoint,
@@ -273,7 +297,6 @@ public class MachineGunController : MonoBehaviour
             Destroy(fx.gameObject, impactVFXLifetime);
         }
 
-        // ── Explosion VFX ─────────────────────────────────────────────────────
         if (useExplosionVFX && explosionVFXPrefab != null && impactRadius > 0f)
         {
             VisualEffect fx = Instantiate(explosionVFXPrefab, hitPoint,
