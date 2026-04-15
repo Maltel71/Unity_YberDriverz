@@ -9,25 +9,26 @@ using UnityEngine;
 //  LMGTracker.cs  -  Unity 6
 //
 //  Two-stage mount tracker for machine guns.
+//  Behaviour depends on camera mode (read from TankCameraController):
 //
-//  Mount (horizontal): follows the camera via a screen-centre raycast.
-//  Since Cinemachine uses a single physical camera that moves position,
-//  the raycast always points exactly where the active sight is looking -
-//  no special mode handling required.
+//    Third Person / Gun Sight
+//      Mount horizontal: screen-centre raycast (camera is free to look around).
+//      Vertical: mouse Y two-stage elevation.
 //
-//  Vertical: mouse Y drives two-stage elevation.
+//    LMG Sight
+//      Mount horizontal: mouse X directly.
+//      Vertical: mouse Y two-stage elevation.
+//      Raycast cannot be used here because the LMG sight camera is parented
+//      to the LMG mount - it always points where the gun already points,
+//      so the raycast never produces rotation.
+//
+//  If no TankCameraController is assigned, always uses raycast (Third Person).
+//
+//  Two-stage elevation:
 //    Stage 1 - Secondary Pivot (mid-body): fills its range first.
 //    Stage 2 - Barrel: picks up the remainder once secondary is maxed.
 //
-//  Recommended hierarchy:
-//    Mount
-//    └── SecondaryPivot
-//        └── Barrel
-//
-//  Pair with MachineGunController for shooting. This script only handles rotation.
-//
-//  relativeTo: the parent transform for local-space yaw calculations (usually
-//  the hull or turret). Auto-fills from mount.parent on Start.
+//  Recommended hierarchy:  Mount > SecondaryPivot > Barrel
 // =============================================================================
 
 public class LMGTracker : MonoBehaviour
@@ -37,24 +38,24 @@ public class LMGTracker : MonoBehaviour
     [Tooltip("The LMG mount pivot that rotates left and right.")]
     public Transform mount;
 
-    [Tooltip("The barrel that tilts up and down (stage 2). " +
-             "For two-stage tracking, make this a child of Secondary Pivot.")]
+    [Tooltip("The barrel (stage 2 vertical). Make this a child of Secondary Pivot.")]
     public Transform barrel;
 
-    [Tooltip("The mid-body section that tilts first (stage 1). " +
-             "Leave empty to use single-stage tracking on the barrel only.")]
+    [Tooltip("The mid-body section (stage 1 vertical). Leave empty for single-stage.")]
     public Transform secondaryPivot;
 
-    [Tooltip("Parent transform for local-space yaw calculations. " +
-             "Auto-fills from mount.parent on Start.")]
+    [Tooltip("Parent transform for local-space yaw calculations. Auto-fills from mount.parent.")]
     public Transform relativeTo;
 
     [Tooltip("Camera the player looks through. Leave empty to use Camera.main.")]
     public Camera aimCamera;
 
+    [Tooltip("Assign TankCameraController to enable LMG Sight direct mouse control.")]
+    public TankCameraController cameraController;
+
     // ── Aiming ────────────────────────────────────────────────────────────────
-    [Header("Aiming")]
-    [Tooltip("How far the aim ray reaches (metres).")]
+    [Header("Aiming  (Third Person / Gun Sight)")]
+    [Tooltip("Raycast range (metres).")]
     public float aimRange = 300f;
 
     [Tooltip("Layers the aim ray can hit.")]
@@ -63,22 +64,23 @@ public class LMGTracker : MonoBehaviour
     // ── Smoothing ─────────────────────────────────────────────────────────────
     [Header("Smoothing")]
     [Range(0.5f, 20f)]
-    [Tooltip("How quickly the mount rotates to face the aim direction.")]
     public float mountSmoothing = 8f;
 
     [Range(0.5f, 20f)]
-    [Tooltip("How quickly the vertical pivots ease toward their targets.")]
     public float barrelSmoothing = 8f;
 
-    // ── Mouse Speed ───────────────────────────────────────────────────────────
-    [Header("Mouse Speed")]
+    // ── Mouse Speeds ──────────────────────────────────────────────────────────
+    [Header("Mouse Speeds")]
+    [Range(0.5f, 15f)]
+    [Tooltip("How fast mouse X rotates the mount in LMG Sight mode.")]
+    public float mountMouseSpeed = 3f;
+
     [Range(0.5f, 15f)]
     [Tooltip("How fast mouse Y moves the elevation target.")]
     public float barrelSpeed = 3f;
 
     // ── Secondary Pivot Limits (Stage 1) ──────────────────────────────────────
     [Header("Secondary Pivot Elevation Limits  (Stage 1)")]
-    [Tooltip("Enable vertical tracking. Uncheck for a fixed-elevation mount.")]
     public bool trackVertical = true;
 
     [Range(0f, 45f)]
@@ -90,17 +92,16 @@ public class LMGTracker : MonoBehaviour
     // ── Barrel Extra Limits (Stage 2) ─────────────────────────────────────────
     [Header("Barrel Extra Elevation Limits  (Stage 2)")]
     [Range(0f, 45f)]
-    [Tooltip("Additional degrees the barrel can depress beyond the secondary pivot.")]
     public float barrelExtraDepression = 5f;
 
     [Range(0f, 80f)]
-    [Tooltip("Additional degrees the barrel can elevate beyond the secondary pivot.")]
     public float barrelExtraElevation = 15f;
 
     // ─────────────────────────────────────────────────────────────────────────
     //  Private state
     // ─────────────────────────────────────────────────────────────────────────
 
+    private float mountTargetYaw    = 0f;
     private float mountYaw          = 0f;
     private float mountYawVel       = 0f;
     private float targetPitch       = 0f;
@@ -128,7 +129,10 @@ public class LMGTracker : MonoBehaviour
             aimCamera = Camera.main;
 
         if (mount != null)
-            mountYaw = mount.localEulerAngles.y;
+        {
+            mountYaw       = mount.localEulerAngles.y;
+            mountTargetYaw = mountYaw;
+        }
 
         Transform seedFrom = secondaryPivot != null ? secondaryPivot : barrel;
         if (seedFrom != null)
@@ -145,22 +149,36 @@ public class LMGTracker : MonoBehaviour
     {
         if (mount == null || relativeTo == null) return;
 
-        // ── Horizontal: mount follows screen-centre raycast ───────────────────
-        Vector3 aimPoint  = GetAimPoint();
-        Vector3 toAimFlat = Vector3.ProjectOnPlane(aimPoint - mount.position, relativeTo.up);
-        float targetYaw   = mountYaw;
+        TankCameraMode mode = cameraController != null
+            ? cameraController.CurrentMode
+            : TankCameraMode.ThirdPerson;
 
-        if (toAimFlat.sqrMagnitude > 0.001f)
+        // ── Horizontal: how the mount target yaw is set depends on mode ───────
+        if (mode == TankCameraMode.LMGSight)
         {
-            Vector3 localDir = relativeTo.InverseTransformDirection(toAimFlat.normalized);
-            targetYaw = Mathf.Atan2(localDir.x, localDir.z) * Mathf.Rad2Deg;
+            // Camera is parented to the LMG so a raycast would never produce
+            // rotation. Drive the mount directly with mouse X instead.
+            ReadMouseX(out float mouseX);
+            mountTargetYaw += mouseX * mountMouseSpeed * InputScale;
+        }
+        else
+        {
+            // Third Person / Gun Sight: camera is free, raycast works correctly
+            Vector3 aimPoint  = GetAimPoint();
+            Vector3 toAimFlat = Vector3.ProjectOnPlane(aimPoint - mount.position, relativeTo.up);
+
+            if (toAimFlat.sqrMagnitude > 0.001f)
+            {
+                Vector3 localDir = relativeTo.InverseTransformDirection(toAimFlat.normalized);
+                mountTargetYaw   = Mathf.Atan2(localDir.x, localDir.z) * Mathf.Rad2Deg;
+            }
         }
 
-        mountYaw = Mathf.SmoothDampAngle(mountYaw, targetYaw, ref mountYawVel,
+        mountYaw = Mathf.SmoothDampAngle(mountYaw, mountTargetYaw, ref mountYawVel,
                                           Mathf.Max(0.01f, 1f / mountSmoothing));
         mount.localRotation = Quaternion.Euler(0f, mountYaw, 0f);
 
-        // ── Vertical: two-stage mouse Y elevation ─────────────────────────────
+        // ── Vertical: mouse Y two-stage elevation (same in all modes) ─────────
         if (!trackVertical) return;
 
         ReadMouseY(out float mouseY);
@@ -175,7 +193,7 @@ public class LMGTracker : MonoBehaviour
 
         targetPitch = Mathf.Clamp(targetPitch, -totalMaxElevation, totalMaxDepression);
 
-        // Stage 1: secondary pivot fills its range first
+        // Stage 1: secondary pivot
         if (secondaryPivot != null)
         {
             float secondaryTarget = Mathf.Clamp(targetPitch,
@@ -228,6 +246,19 @@ public class LMGTracker : MonoBehaviour
             return hit.point;
 
         return ray.origin + ray.direction * aimRange;
+    }
+
+    private void ReadMouseX(out float mouseX)
+    {
+        mouseX = 0f;
+        if (Cursor.lockState != CursorLockMode.Locked) return;
+#if ENABLE_INPUT_SYSTEM
+        var mouse = Mouse.current;
+        if (mouse != null)
+            mouseX = mouse.delta.ReadValue().x;
+#else
+        mouseX = Input.GetAxis("Mouse X");
+#endif
     }
 
     private void ReadMouseY(out float mouseY)
