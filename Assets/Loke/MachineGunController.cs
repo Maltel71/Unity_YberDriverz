@@ -46,8 +46,12 @@ public class MachineGunController : MonoBehaviour
 {
     // ── Shoot Points ──────────────────────────────────────────────────────────
     [Header("Shoot Points  (one entry per barrel)")]
-    [Tooltip("Add one entry per barrel. Each fires in sequence (cycled). " +
-             "For a single gun just add one entry.")]
+    [Tooltip("Add one entry per barrel. Barrels fire in strict sequence and cycle back:\n" +
+             "1 barrel  → fires repeatedly from barrel 1.\n" +
+             "2 barrels → barrel 1, barrel 2, barrel 1, barrel 2...\n" +
+             "3 barrels → 1, 2, 3, 1, 2, 3...\n" +
+             "Fire Rate is the total rate across all barrels, so each barrel " +
+             "fires at (fireRate / barrelCount) individually.")]
     public MGShootPoint[] shootPoints;
 
     // ── Raycast ───────────────────────────────────────────────────────────────
@@ -78,19 +82,20 @@ public class MachineGunController : MonoBehaviour
     [Range(0f, 3f)]
     public float explosionUpwardModifier = 0.5f;
 
-    [Tooltip("VFX prefab instantiated at the hit point (e.g. sparks / dust).")]
-    public GameObject impactVFXPrefab;
+    [Tooltip("Visual Effect instantiated at the hit point (e.g. sparks / dust). " +
+             "Leave empty for no impact VFX.")]
+    public VisualEffect impactVFXPrefab;
 
-    [Tooltip("How long before the impact VFX is destroyed (seconds).")]
+    [Tooltip("How long before the impact VFX is destroyed after playing (seconds).")]
     public float impactVFXLifetime = 1f;
 
     [Tooltip("Enable a separate explosion VFX when impactRadius > 0.")]
     public bool useExplosionVFX = false;
 
-    [Tooltip("Explosion VFX prefab, used when useExplosionVFX is true and impactRadius > 0.")]
-    public GameObject explosionVFXPrefab;
+    [Tooltip("Explosion Visual Effect instantiated at the hit point when useExplosionVFX is true.")]
+    public VisualEffect explosionVFXPrefab;
 
-    [Tooltip("How long before the explosion VFX is destroyed (seconds).")]
+    [Tooltip("How long before the explosion VFX is destroyed after playing (seconds).")]
     public float explosionVFXLifetime = 2f;
 
     // ── Fire Rate ─────────────────────────────────────────────────────────────
@@ -183,7 +188,9 @@ public class MachineGunController : MonoBehaviour
     {
         if (shootPoints == null || shootPoints.Length == 0) return;
 
-        // Clamp and wrap barrel index in case the array changed at runtime
+        // Pick the current barrel and advance the index for next shot.
+        // This gives strict alternation: barrel 0 → barrel 1 → barrel 0 → ...
+        // Never two barrels fire at the same time.
         currentBarrel = currentBarrel % shootPoints.Length;
         MGShootPoint sp = shootPoints[currentBarrel];
 
@@ -260,17 +267,19 @@ public class MachineGunController : MonoBehaviour
         // ── Impact VFX ────────────────────────────────────────────────────────
         if (impactVFXPrefab != null)
         {
-            GameObject fx = Instantiate(impactVFXPrefab, hitPoint,
-                                        Quaternion.LookRotation(hit.normal));
-            Destroy(fx, impactVFXLifetime);
+            VisualEffect fx = Instantiate(impactVFXPrefab, hitPoint,
+                                          Quaternion.LookRotation(hit.normal));
+            fx.Play();
+            Destroy(fx.gameObject, impactVFXLifetime);
         }
 
         // ── Explosion VFX ─────────────────────────────────────────────────────
         if (useExplosionVFX && explosionVFXPrefab != null && impactRadius > 0f)
         {
-            GameObject fx = Instantiate(explosionVFXPrefab, hitPoint,
-                                        Quaternion.identity);
-            Destroy(fx, explosionVFXLifetime);
+            VisualEffect fx = Instantiate(explosionVFXPrefab, hitPoint,
+                                          Quaternion.identity);
+            fx.Play();
+            Destroy(fx.gameObject, explosionVFXLifetime);
         }
     }
 

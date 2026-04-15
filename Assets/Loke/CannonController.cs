@@ -64,20 +64,20 @@ public class CannonController : MonoBehaviour
     [Range(0f, 3f)]
     public float explosionUpwardModifier = 1f;
 
-    [Tooltip("VFX prefab instantiated at the exact hit point (e.g. a dust / sparks effect). " +
+    [Tooltip("Visual Effect instantiated at the exact hit point (e.g. sparks / dust). " +
              "Leave empty for no impact VFX.")]
-    public GameObject impactVFXPrefab;
+    public VisualEffect impactVFXPrefab;
 
-    [Tooltip("How long before the instantiated impact VFX is destroyed (seconds).")]
+    [Tooltip("How long before the impact VFX is destroyed after playing (seconds).")]
     public float impactVFXLifetime = 2f;
 
     [Tooltip("Enable a separate, larger explosion VFX when impactRadius > 0.")]
     public bool useExplosionVFX = true;
 
-    [Tooltip("Explosion VFX prefab instantiated at the hit point when useExplosionVFX is true.")]
-    public GameObject explosionVFXPrefab;
+    [Tooltip("Explosion Visual Effect instantiated at the hit point when useExplosionVFX is true.")]
+    public VisualEffect explosionVFXPrefab;
 
-    [Tooltip("How long before the instantiated explosion VFX is destroyed (seconds).")]
+    [Tooltip("How long before the explosion VFX is destroyed after playing (seconds).")]
     public float explosionVFXLifetime = 3f;
 
     // ── Recoil ────────────────────────────────────────────────────────────────
@@ -213,17 +213,19 @@ public class CannonController : MonoBehaviour
         // ── Impact VFX ────────────────────────────────────────────────────────
         if (impactVFXPrefab != null)
         {
-            GameObject fx = Instantiate(impactVFXPrefab, hitPoint,
-                                        Quaternion.LookRotation(hit.normal));
-            Destroy(fx, impactVFXLifetime);
+            VisualEffect fx = Instantiate(impactVFXPrefab, hitPoint,
+                                          Quaternion.LookRotation(hit.normal));
+            fx.Play();
+            Destroy(fx.gameObject, impactVFXLifetime);
         }
 
         // ── Explosion VFX ─────────────────────────────────────────────────────
         if (useExplosionVFX && explosionVFXPrefab != null && impactRadius > 0f)
         {
-            GameObject fx = Instantiate(explosionVFXPrefab, hitPoint,
-                                        Quaternion.identity);
-            Destroy(fx, explosionVFXLifetime);
+            VisualEffect fx = Instantiate(explosionVFXPrefab, hitPoint,
+                                          Quaternion.identity);
+            fx.Play();
+            Destroy(fx.gameObject, explosionVFXLifetime);
         }
     }
 

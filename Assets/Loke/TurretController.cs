@@ -53,7 +53,8 @@ public class TurretController : MonoBehaviour
 
     [Range(0.5f, 20f)]
     [Tooltip("How quickly the turret rotates to match the camera direction.\n" +
-             "Low (1-3) = slow and heavy.  Mid (5-8) = smooth lag.  High (15+) = near-instant.")]
+             "Low (1-2) = slow and heavy.  Mid (4-6) = smooth lag.  High (12+) = near-instant.\n" +
+             "The turret now fully converges - no more drifting offset after turning.")]
     public float turretSmoothing = 5f;
 
     // ── Barrel (mouse-driven) ─────────────────────────────────────────────────
@@ -93,9 +94,13 @@ public class TurretController : MonoBehaviour
     //  Private state
     // ─────────────────────────────────────────────────────────────────────────
 
-    private float turretYaw    = 0f;  // actual yaw  - lerped toward targetYaw
-    private float barrelPitch  = 0f;  // actual pitch - lerped toward targetPitch
-    private float targetPitch  = 0f;  // accumulates mouse Y input
+    private float turretYaw       = 0f;  // actual yaw   - smoothed toward targetYaw
+    private float barrelPitch     = 0f;  // actual pitch - smoothed toward targetPitch
+    private float targetPitch     = 0f;  // accumulates mouse Y input
+
+    // Velocity refs required by SmoothDampAngle
+    private float turretYawVel    = 0f;
+    private float barrelPitchVel  = 0f;
 
     // New Input System mouse.delta gives raw pixels; scale down so barrelSpeed
     // feels equivalent to the normalised values Legacy Input.GetAxis returns.
@@ -152,12 +157,30 @@ public class TurretController : MonoBehaviour
 
         // ── Barrel pitch: accumulate mouse Y directly ─────────────────────────
         ReadMouseY(out float mouseY);
-        targetPitch -= mouseY * barrelSpeed * InputScale;
-        targetPitch  = Mathf.Clamp(targetPitch, -maxElevation, maxDepression);
 
-        // ── Ease both toward their targets ────────────────────────────────────
-        turretYaw   = Mathf.LerpAngle(turretYaw,  targetYaw,  turretSmoothing * Time.deltaTime);
-        barrelPitch = Mathf.LerpAngle(barrelPitch, targetPitch, barrelSmoothing * Time.deltaTime);
+        // Only accept mouse input when it would move the barrel WITHIN the limits.
+        // If the barrel is already at max elevation and the mouse keeps pushing up,
+        // we discard that input entirely so nothing accumulates past the edge.
+        // When the mouse reverses direction the barrel responds immediately.
+        bool pushingPastTop    = mouseY > 0f && targetPitch <= -maxElevation;
+        bool pushingPastBottom = mouseY < 0f && targetPitch >=  maxDepression;
+        if (!pushingPastTop && !pushingPastBottom)
+            targetPitch -= mouseY * barrelSpeed * InputScale;
+
+        targetPitch = Mathf.Clamp(targetPitch, -maxElevation, maxDepression);
+
+        // ── Smooth both toward their targets ──────────────────────────────────
+        float turretSmoothTime = Mathf.Max(0.01f, 1f / turretSmoothing);
+        float barrelSmoothTime = Mathf.Max(0.01f, 1f / barrelSmoothing);
+
+        turretYaw   = Mathf.SmoothDampAngle(turretYaw,  targetYaw,  ref turretYawVel,   turretSmoothTime);
+        barrelPitch = Mathf.SmoothDampAngle(barrelPitch, targetPitch, ref barrelPitchVel, barrelSmoothTime);
+
+        // Hard clamp the actual pitch and kill velocity at the limits so
+        // SmoothDamp's built-up momentum can't push past the edge or bounce back.
+        if (barrelPitch <= -maxElevation || barrelPitch >= maxDepression)
+            barrelPitchVel = 0f;
+        barrelPitch = Mathf.Clamp(barrelPitch, -maxElevation, maxDepression);
 
         // ── Apply in local space ──────────────────────────────────────────────
         turret.localRotation = Quaternion.Euler(0f, turretYaw, 0f);
