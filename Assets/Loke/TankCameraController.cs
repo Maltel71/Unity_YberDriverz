@@ -158,7 +158,7 @@ public class TankCameraController : MonoBehaviour
         var mouse = Mouse.current;
 
         if (kb    != null && kb.zKey.wasPressedThisFrame)            togglePressed = true;
-        if (mouse != null && mouse.leftButton.wasPressedThisFrame)   togglePressed = true;
+        if (mouse != null && mouse.rightButton.wasPressedThisFrame) togglePressed = true;
         if (mouse != null) scroll = mouse.scroll.ReadValue().y;
 #else
         if (Input.GetKeyDown(KeyCode.Z))             togglePressed = true;
