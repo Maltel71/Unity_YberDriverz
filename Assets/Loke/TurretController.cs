@@ -8,21 +8,19 @@ using UnityEngine;
 // =============================================================================
 //  TurretController.cs  -  Unity 6
 //
-//  Turret (horizontal): follows the camera via a screen-centre raycast,
-//  so it always points where you are looking regardless of hull orientation.
+//  Turret (horizontal): follows the camera via a screen-centre raycast.
+//  Barrel (vertical): controlled by mouse Y, clamped between limits.
 //
-//  Barrel (vertical): controlled directly by mouse Y, with adjustable speed,
-//  clamped between maxDepression and maxElevation. Both axes ease smoothly
-//  toward their targets instead of snapping.
+//  In LMG Sight mode (read from TankCameraController): turret and barrel lock
+//  completely so the LMG can be aimed independently without the turret moving.
+//  In all other modes the raycast drives the turret as normal.
 //
 //  Setup:
-//    1. Attach this script to any GameObject (e.g. the tank root).
-//    2. Hull      - tank body the turret sits on. Leave empty to use
-//                  the turret's parent automatically.
-//    3. Turret    - rotates left/right (child of hull).
-//    4. Barrel    - tilts up/down (child of turret).
-//    5. Aim Camera - camera the player looks through. Leave empty for Camera.main.
-//    6. Hit Play - cursor locks automatically. Press Escape to unlock.
+//    1. Attach to any GameObject (e.g. the tank root).
+//    2. Hull, Turret, Barrel - assign as before.
+//    3. Aim Camera           - leave empty for Camera.main.
+//    4. Camera Controller    - assign TankCameraController so the LMG sight
+//                              lock works. Leave empty to never lock.
 // =============================================================================
 
 public class TurretController : MonoBehaviour
@@ -42,19 +40,19 @@ public class TurretController : MonoBehaviour
     [Tooltip("The camera the player looks through. Leave empty to use Camera.main.")]
     public Camera aimCamera;
 
+    [Tooltip("Assign TankCameraController so the turret locks in LMG Sight mode.")]
+    public TankCameraController cameraController;
+
     // ── Turret (raycast-driven) ───────────────────────────────────────────────
     [Header("Turret - Raycast Aiming")]
-    [Tooltip("How far the aim ray reaches before giving up on a hit (metres).")]
+    [Tooltip("How far the aim ray reaches (metres).")]
     public float aimRange = 500f;
 
-    [Tooltip("Which layers the aim ray can hit. Exclude the tank's own layer " +
-             "so it does not aim at itself.")]
+    [Tooltip("Which layers the aim ray can hit. Exclude the tank's own layer.")]
     public LayerMask aimLayerMask = Physics.DefaultRaycastLayers;
 
     [Range(0.5f, 20f)]
-    [Tooltip("How quickly the turret rotates to match the camera direction.\n" +
-             "Low (1-2) = slow and heavy.  Mid (4-6) = smooth lag.  High (12+) = near-instant.\n" +
-             "The turret now fully converges - no more drifting offset after turning.")]
+    [Tooltip("How quickly the turret rotates to match the camera direction.")]
     public float turretSmoothing = 5f;
 
     // ── Barrel (mouse-driven) ─────────────────────────────────────────────────
@@ -64,8 +62,7 @@ public class TurretController : MonoBehaviour
     public float barrelSpeed = 3f;
 
     [Range(0.5f, 20f)]
-    [Tooltip("How quickly the barrel physically rotates toward its target angle.\n" +
-             "Low (1-3) = slow and heavy.  Mid (5-8) = smooth lag.  High (15+) = near-instant.")]
+    [Tooltip("How quickly the barrel physically rotates toward its target angle.")]
     public float barrelSmoothing = 5f;
 
     // ── Barrel Elevation Limits ───────────────────────────────────────────────
@@ -80,10 +77,8 @@ public class TurretController : MonoBehaviour
 
     // ── Cursor ────────────────────────────────────────────────────────────────
     [Header("Cursor")]
-    [Tooltip("Lock and hide the cursor when the game starts.")]
     public bool lockCursorOnStart = true;
 
-    [Tooltip("Press this key to toggle the cursor lock at runtime.")]
 #if ENABLE_INPUT_SYSTEM
     public Key cursorToggleKey = Key.Escape;
 #else
@@ -94,16 +89,12 @@ public class TurretController : MonoBehaviour
     //  Private state
     // ─────────────────────────────────────────────────────────────────────────
 
-    private float turretYaw       = 0f;  // actual yaw   - smoothed toward targetYaw
-    private float barrelPitch     = 0f;  // actual pitch - smoothed toward targetPitch
-    private float targetPitch     = 0f;  // accumulates mouse Y input
+    private float turretYaw      = 0f;
+    private float barrelPitch    = 0f;
+    private float targetPitch    = 0f;
+    private float turretYawVel   = 0f;
+    private float barrelPitchVel = 0f;
 
-    // Velocity refs required by SmoothDampAngle
-    private float turretYawVel    = 0f;
-    private float barrelPitchVel  = 0f;
-
-    // New Input System mouse.delta gives raw pixels; scale down so barrelSpeed
-    // feels equivalent to the normalised values Legacy Input.GetAxis returns.
 #if ENABLE_INPUT_SYSTEM
     private const float InputScale = 0.05f;
 #else
@@ -122,7 +113,6 @@ public class TurretController : MonoBehaviour
         if (aimCamera == null)
             aimCamera = Camera.main;
 
-        // Seed angles from existing transforms so nothing snaps on frame 1
         if (turret != null)
             turretYaw = turret.localEulerAngles.y;
 
@@ -143,10 +133,13 @@ public class TurretController : MonoBehaviour
 
         if (turret == null || hull == null) return;
 
-        // ── Turret yaw: raycast to find where the camera points ───────────────
+        // Turret and barrel lock completely when the LMG sight is active
+        if (cameraController != null && cameraController.CurrentMode == TankCameraMode.LMGSight)
+            return;
+
+        // ── Turret yaw: screen-centre raycast ─────────────────────────────────
         Vector3 aimPoint  = GetAimPoint();
-        Vector3 toAim     = aimPoint - turret.position;
-        Vector3 toAimFlat = Vector3.ProjectOnPlane(toAim, hull.up);
+        Vector3 toAimFlat = Vector3.ProjectOnPlane(aimPoint - turret.position, hull.up);
 
         float targetYaw = turretYaw;
         if (toAimFlat.sqrMagnitude > 0.001f)
@@ -155,13 +148,9 @@ public class TurretController : MonoBehaviour
             targetYaw = Mathf.Atan2(localDir.x, localDir.z) * Mathf.Rad2Deg;
         }
 
-        // ── Barrel pitch: accumulate mouse Y directly ─────────────────────────
+        // ── Barrel pitch: mouse Y ─────────────────────────────────────────────
         ReadMouseY(out float mouseY);
 
-        // Only accept mouse input when it would move the barrel WITHIN the limits.
-        // If the barrel is already at max elevation and the mouse keeps pushing up,
-        // we discard that input entirely so nothing accumulates past the edge.
-        // When the mouse reverses direction the barrel responds immediately.
         bool pushingPastTop    = mouseY > 0f && targetPitch <= -maxElevation;
         bool pushingPastBottom = mouseY < 0f && targetPitch >=  maxDepression;
         if (!pushingPastTop && !pushingPastBottom)
@@ -170,19 +159,15 @@ public class TurretController : MonoBehaviour
         targetPitch = Mathf.Clamp(targetPitch, -maxElevation, maxDepression);
 
         // ── Smooth both toward their targets ──────────────────────────────────
-        float turretSmoothTime = Mathf.Max(0.01f, 1f / turretSmoothing);
-        float barrelSmoothTime = Mathf.Max(0.01f, 1f / barrelSmoothing);
+        turretYaw   = Mathf.SmoothDampAngle(turretYaw,   targetYaw,   ref turretYawVel,
+                                             Mathf.Max(0.01f, 1f / turretSmoothing));
+        barrelPitch = Mathf.SmoothDampAngle(barrelPitch,  targetPitch, ref barrelPitchVel,
+                                             Mathf.Max(0.01f, 1f / barrelSmoothing));
 
-        turretYaw   = Mathf.SmoothDampAngle(turretYaw,  targetYaw,  ref turretYawVel,   turretSmoothTime);
-        barrelPitch = Mathf.SmoothDampAngle(barrelPitch, targetPitch, ref barrelPitchVel, barrelSmoothTime);
-
-        // Hard clamp the actual pitch and kill velocity at the limits so
-        // SmoothDamp's built-up momentum can't push past the edge or bounce back.
         if (barrelPitch <= -maxElevation || barrelPitch >= maxDepression)
             barrelPitchVel = 0f;
         barrelPitch = Mathf.Clamp(barrelPitch, -maxElevation, maxDepression);
 
-        // ── Apply in local space ──────────────────────────────────────────────
         turret.localRotation = Quaternion.Euler(0f, turretYaw, 0f);
 
         if (barrel != null)
@@ -212,7 +197,6 @@ public class TurretController : MonoBehaviour
     {
         mouseY = 0f;
         if (Cursor.lockState != CursorLockMode.Locked) return;
-
 #if ENABLE_INPUT_SYSTEM
         var mouse = Mouse.current;
         if (mouse != null)
@@ -244,7 +228,7 @@ public class TurretController : MonoBehaviour
         Cursor.visible   = !locked;
     }
 
-    public Vector3 GetCurrentAimPoint()  => GetAimPoint();
-    public float   GetBarrelElevation()  => barrelPitch;
-    public float   GetTurretYaw()        => turretYaw;
+    public Vector3 GetCurrentAimPoint() => GetAimPoint();
+    public float   GetBarrelElevation() => barrelPitch;
+    public float   GetTurretYaw()       => turretYaw;
 }
