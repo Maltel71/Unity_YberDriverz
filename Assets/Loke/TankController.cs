@@ -67,7 +67,7 @@ public class TankController : MonoBehaviour
     [Header("Rigidbody")]
     public float mass        = 2000f;
     public float drag        = 1.5f;
-    public float angularDrag = 5f;
+    public float angularDrag = 1.5f;
     [Tooltip("Lower centre of mass prevents tipping. Negative Y moves it down.")]
     public Vector3 centerOfMassOffset = new Vector3(0f, -0.5f, 0f);
 
@@ -103,27 +103,24 @@ public class TankController : MonoBehaviour
     [Tooltip("Acceleration curve sharpness. Higher = more gradual ramp up.")]
     public float accelerationCurveSharpness = 1.5f;
 
-    [Tooltip("Differential torque force for turning. Higher = faster pivots.")]
-    public float turnForce = 4000f;
+    [Tooltip("Steering yaw torque (N*m). The tank rotates by this torque multiplied by " +
+             "forward speed, so turning is naturally proportional to how fast you are moving. " +
+             "Increase if the tank feels sluggish to steer; decrease if it oversteers.")]
+    public float turnForce = 8000f;
 
     [Range(0.1f, 3f)]
     public float turnSensitivity = 1f;
 
-    [Tooltip("Allow pivot turn (spin on the spot) with no throttle.")]
+    [Tooltip("Allow pivot turn (spin on the spot with A/D and no throttle). " +
+             "Uses differential force only when stationary.")]
     public bool allowPivotTurn = true;
 
     [Range(0f, 1f)]
-    [Tooltip("How much turn force falls off at max speed.\n" +
-             "0 = same turn force at any speed.\n" +
-             "1 = almost no turning at max speed.\n" +
-             "0.6 = noticeable reduction but still effective at top speed.")]
-    public float turnSpeedFalloff = 0.6f;
-
-    [Range(0f, 10f)]
-    [Tooltip("Forward speed (m/s) at which steering reaches full effectiveness. " +
-             "Below this speed turning scales down toward zero, so at a crawl the tank " +
-             "can barely rotate. ~3 m/s (~11 km/h) feels realistic for a wheeled vehicle.")]
-    public float fullSteerSpeedMS = 3f;
+    [Tooltip("How much steering torque falls off at max speed.\n" +
+             "0 = same torque at any speed.\n" +
+             "0.4 = gentle reduction at top speed (recommended).\n" +
+             "1 = almost no turning at max speed.")]
+    public float turnSpeedFalloff = 0.4f;
 
     // ── Visual Steering ───────────────────────────────────────────────────────
     [Header("Visual Steering")]
@@ -135,11 +132,6 @@ public class TankController : MonoBehaviour
     [Range(1f, 20f)]
     public float steerAngleSpeed = 8f;
 
-    [Range(0f, 1f)]
-    [Tooltip("How much lateral grip steerable wheels lose when fully turned. " +
-             "1 = no sideways grip at max steer angle (slides freely). " +
-             "0.5 = half grip at max angle. 0 = steer angle has no grip effect.")]
-    public float steerGripReduction = 0.6f;
 
     // ── Brakes & Rolling ──────────────────────────────────────────────────────
     [Header("Brakes and Rolling")]
@@ -164,9 +156,9 @@ public class TankController : MonoBehaviour
     // ── Lateral Friction ──────────────────────────────────────────────────────
     [Header("Lateral Friction")]
     [Tooltip("How strongly each grounded wheel resists sideways sliding. " +
-             "Higher = snappier turning but can feel rigid. 0.3-0.8 is a good range.")]
+             "Lower = more drift and slide. 0.1-0.25 for drifty, 0.4-0.8 for grippy.")]
     [Range(0f, 1f)]
-    public float lateralFriction = 0.5f;
+    public float lateralFriction = 0.18f;
 
     // ── Input ─────────────────────────────────────────────────────────────────
 #if ENABLE_INPUT_SYSTEM
@@ -288,22 +280,29 @@ public class TankController : MonoBehaviour
         }
 
         // ── Speed scalars ─────────────────────────────────────────────────────
-        // Both use actual current speed so rolling at high speed still restricts
-        // driving and turning the same way as when actively accelerating at that speed.
-        float speed       = GetSpeedMS();
-        float speedRatio  = Mathf.Clamp01(speed / maxSpeed);
+        float speed      = GetSpeedMS();
+        float speedRatio = Mathf.Clamp01(speed / maxSpeed);
+
+        // Drive: full force at low speed, fades out as you approach maxSpeed
         float driveScalar = 1f - Mathf.Pow(speedRatio, accelerationCurveSharpness);
-        float turnScalar  = 1f - speedRatio * turnSpeedFalloff;
 
-        // ── Forces ────────────────────────────────────────────────────────────
-        float driveForce = throttle * motorForce * driveScalar;
-        float diffForce  = steer   * turnForce  * turnScalar;
+        // Turn: slightly reduced at top speed via turnSpeedFalloff
+        float turnScalar = 1f - speedRatio * turnSpeedFalloff;
 
-        // Block pivot turning only when actually stationary (no throttle AND barely moving).
-        // If the tank is rolling at speed, turning is always allowed so you can steer while coasting.
-        bool isStationary = speed < 0.5f;
-        if (!allowPivotTurn && !hasThrottle && isStationary)
-            diffForce = 0f;
+        // ── Car-like steering: yaw torque proportional to steer × forward speed ──
+        // At zero speed torque is zero (no ballerina spinning).
+        // As you gain speed the torque grows, steering the tank naturally like a car.
+        // The front wheel angle is what steers - the lateral friction on angled wheels
+        // (see ProcessWheelSide) generates the actual cornering force per wheel.
+        float steeringTorque = steer * Mathf.Abs(forwardSpeedMS) * turnForce * turnScalar;
+        rb.AddTorque(transform.up * steeringTorque, ForceMode.Force);
+
+        // ── Differential: only for pivot turns when stationary ────────────────
+        float driveForce  = throttle * motorForce * driveScalar;
+        bool  isStationary = speed < 0.5f;
+        float diffForce   = (allowPivotTurn && isStationary)
+                          ? steer * turnForce * 0.4f
+                          : 0f;
 
         ProcessWheelSide(leftWheels,  driveForce,  diffForce, brake);
         ProcessWheelSide(rightWheels, driveForce, -diffForce, brake);
@@ -375,18 +374,26 @@ public class TankController : MonoBehaviour
                 }
 
                 // ── Lateral friction ───────────────────────────────────────
-                // Steerable wheels lose grip proportional to how much they are turned.
-                // A fully-turned wheel can slide sideways, letting the tank pivot naturally.
-                float latGrip = lateralFriction;
-                if (wp.steerable && maxSteerAngle > 0f)
+                // Steerable wheels resist sliding along their OWN lateral axis
+                // (perpendicular to the wheel's rolling direction), not the tank's axis.
+                // This means an angled front wheel naturally pushes the contact point
+                // sideways as the tank moves forward - exactly how real car steering works.
+                // Non-steerable wheels simply resist the tank's lateral sliding as before.
+                Vector3 pointVel   = rb.GetPointVelocity(contactWorld);
+                Vector3 wheelLateral;
+                if (wp.steerable && Mathf.Abs(wp.steerAngle) > 0.5f)
                 {
-                    float steerFraction = Mathf.Abs(wp.steerAngle) / maxSteerAngle;
-                    latGrip *= 1f - steerFraction * steerGripReduction;
+                    float steerRad = wp.steerAngle * Mathf.Deg2Rad;
+                    wheelLateral = transform.right   * Mathf.Cos(steerRad)
+                                 - transform.forward * Mathf.Sin(steerRad);
+                }
+                else
+                {
+                    wheelLateral = transform.right;
                 }
 
-                Vector3 pointVel = rb.GetPointVelocity(contactWorld);
-                float   latSpeed = Vector3.Dot(pointVel, transform.right);
-                Vector3 latForce = -transform.right * (latSpeed * latGrip * rb.mass / allWheels.Length);
+                float   latSpeed = Vector3.Dot(pointVel, wheelLateral);
+                Vector3 latForce = -wheelLateral * (latSpeed * lateralFriction * rb.mass / allWheels.Length);
                 rb.AddForceAtPosition(latForce, contactWorld, ForceMode.Force);
             }
             else
