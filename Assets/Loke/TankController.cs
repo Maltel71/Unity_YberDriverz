@@ -155,7 +155,7 @@ public class TankController : MonoBehaviour
 
     // ── Lateral Friction ──────────────────────────────────────────────────────
     [Header("Lateral Friction")]
-    [Range(0f, 1f)]
+    [Range(0f, 2f)]
     [Tooltip("How strongly each grounded wheel resists sideways sliding. " +
              "Lower = more drift and slide. 0.1-0.25 for drifty, 0.4-0.8 for grippy.")]
     public float lateralFriction = 0.18f;
