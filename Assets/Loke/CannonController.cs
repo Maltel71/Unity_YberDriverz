@@ -3,82 +3,99 @@
 using UnityEngine.InputSystem;
 #endif
 
-using System.Collections;
 using UnityEngine;
 using UnityEngine.VFX;
 
 // =============================================================================
 //  CannonController.cs  -  Unity 6
 //
-//  Single-shot raycast cannon with muzzle flash, impact / explosion VFX,
-//  area force, audio, and barrel recoil.
+//  Physical-projectile cannon with multi-ammo-type support.
+//  Press Q (configurable) to cycle ammo types.
+//
+//  Ammo types are defined in the Inspector as an array of CannonAmmoType.
+//  Each type carries its own projectile prefab, muzzle velocity, damage,
+//  impact radius, explosion force, and VFX settings.
+//
+//  The projectile prefab must have CannonProjectile attached.
+//  CannonController sets all CannonProjectile fields right after Instantiate,
+//  so you can share one prefab across ammo types and the behaviour differs
+//  purely from the ammo data.
 //
 //  Setup:
 //    1. Attach this script to any GameObject (e.g. the turret or barrel).
-//    2. Create an empty GameObject at the barrel tip - this is the Shoot Point.
-//       Add your muzzle-flash ParticleSystem directly onto that object.
+//    2. Create an empty GameObject at the barrel tip — this is the Shoot Point.
+//       Add your muzzle-flash VisualEffect directly onto that object.
 //    3. Assign the Shoot Point in the Inspector.
-//    4. Assign the hull / barrel Rigidbody for recoil.
-//    5. Optionally assign impact and explosion VFX prefabs.
+//    4. Create at least one CannonAmmoType entry and assign a projectile prefab.
+//    5. Assign the hull Rigidbody for recoil.
 // =============================================================================
+
+[System.Serializable]
+public class CannonAmmoType
+{
+    [Tooltip("Name shown in the console when you cycle to this ammo type.")]
+    public string displayName = "AP";
+
+    [Tooltip("Projectile prefab. Must have CannonProjectile attached.")]
+    public CannonProjectile projectilePrefab;
+
+    [Tooltip("Speed at which the projectile is launched (metres per second).")]
+    public float muzzleVelocity = 800f;
+
+    [Tooltip("Damage dealt on direct hit.")]
+    public float damage = 150f;
+
+    [Tooltip("Radius around the hit point for area damage and explosion force. 0 = point hit only.")]
+    public float impactRadius = 0f;
+
+    [Tooltip("Outward force applied to Rigidbodies inside impactRadius. 0 = no push.")]
+    public float explosionForce = 0f;
+
+    [Range(0f, 3f)]
+    [Tooltip("Upward bias for the explosion force. 1 = standard kick, 0 = purely outward.")]
+    public float explosionUpwardModifier = 1f;
+
+    [Tooltip("VFX instantiated at the hit point on impact. Leave empty for none.")]
+    public VisualEffect impactVFXPrefab;
+
+    [Tooltip("How long before the impact VFX is destroyed (seconds).")]
+    public float impactVFXLifetime = 2f;
+
+    [Tooltip("Enable a separate explosion VFX when impactRadius > 0.")]
+    public bool useExplosionVFX = false;
+
+    [Tooltip("Explosion VFX instantiated at the hit point. Only used when useExplosionVFX is true.")]
+    public VisualEffect explosionVFXPrefab;
+
+    [Tooltip("How long before the explosion VFX is destroyed (seconds).")]
+    public float explosionVFXLifetime = 3f;
+
+    [Tooltip("How many seconds before the projectile self-destructs if it hits nothing.")]
+    public float projectileLifetime = 10f;
+}
 
 public enum CannonFireButton { LeftMouse, RightMouse, MiddleMouse }
 
 public class CannonController : MonoBehaviour
 {
+    // ── Ammo Types ────────────────────────────────────────────────────────────
+    [Header("Ammo Types")]
+    [Tooltip("Define one entry per ammo type. Cycle with the Cycle Ammo Key (default Q).")]
+    public CannonAmmoType[] ammoTypes;
+
     // ── Shoot Point ───────────────────────────────────────────────────────────
     [Header("Shoot Point")]
     [Tooltip("Empty GameObject at the barrel tip. " +
-             "The muzzle-flash ParticleSystem should live on this object.")]
+             "The muzzle-flash VFX should live on or under this object.")]
     public Transform shootPoint;
 
     [Tooltip("Muzzle flash Visual Effect. Leave empty to auto-find it on the Shoot Point.")]
     public VisualEffect muzzleVFX;
 
-    // ── Raycast ───────────────────────────────────────────────────────────────
-    [Header("Raycast")]
-    [Tooltip("Maximum range of the cannon round (metres).")]
-    public float range = 1000f;
-
-    [Tooltip("Layers the cannon round can hit. Exclude the tank's own layer.")]
+    // ── Hit Layers ────────────────────────────────────────────────────────────
+    [Header("Physics")]
+    [Tooltip("Layers the projectile can collide with. Exclude the tank's own layer.")]
     public LayerMask hitLayers = Physics.DefaultRaycastLayers;
-
-    // ── Damage ────────────────────────────────────────────────────────────────
-    [Header("Damage")]
-    [Tooltip("Direct-hit damage sent via SendMessage(\"TakeDamage\", damage) " +
-             "to the hit object. Requires a TakeDamage(float) method on the target.")]
-    public float damage = 150f;
-
-    // ── Impact & Explosion ────────────────────────────────────────────────────
-    [Header("Impact and Explosion")]
-    [Tooltip("Radius around the impact point that also receives damage and force. " +
-             "0 = point hit only (no area effect).")]
-    public float impactRadius = 4f;
-
-    [Tooltip("Outward force applied to every Rigidbody within impactRadius. " +
-             "0 = no physics push.")]
-    public float explosionForce = 8000f;
-
-    [Tooltip("Upward bias added to the explosion force. " +
-             "1 = standard upward kick; 0 = purely outward.")]
-    [Range(0f, 3f)]
-    public float explosionUpwardModifier = 1f;
-
-    [Tooltip("Visual Effect instantiated at the exact hit point (e.g. sparks / dust). " +
-             "Leave empty for no impact VFX.")]
-    public VisualEffect impactVFXPrefab;
-
-    [Tooltip("How long before the impact VFX is destroyed after playing (seconds).")]
-    public float impactVFXLifetime = 2f;
-
-    [Tooltip("Enable a separate, larger explosion VFX when impactRadius > 0.")]
-    public bool useExplosionVFX = true;
-
-    [Tooltip("Explosion Visual Effect instantiated at the hit point when useExplosionVFX is true.")]
-    public VisualEffect explosionVFXPrefab;
-
-    [Tooltip("How long before the explosion VFX is destroyed after playing (seconds).")]
-    public float explosionVFXLifetime = 3f;
 
     // ── Recoil ────────────────────────────────────────────────────────────────
     [Header("Recoil")]
@@ -86,7 +103,7 @@ public class CannonController : MonoBehaviour
              "Leave empty to auto-find on this GameObject or its parents.")]
     public Rigidbody recoilBody;
 
-    [Tooltip("Recoil impulse force (N*s). Applied backwards along the barrel at the moment of firing.")]
+    [Tooltip("Recoil impulse (N*s) applied backwards along the barrel when firing.")]
     public float recoilForce = 12000f;
 
     // ── Audio ─────────────────────────────────────────────────────────────────
@@ -110,11 +127,20 @@ public class CannonController : MonoBehaviour
     [Tooltip("Mouse button that fires the cannon.")]
     public CannonFireButton fireButton = CannonFireButton.LeftMouse;
 
+#if ENABLE_INPUT_SYSTEM
+    [Tooltip("Key that cycles through ammo types.")]
+    public Key cycleAmmoKey = Key.Q;
+#else
+    [Tooltip("Key that cycles through ammo types.")]
+    public KeyCode cycleAmmoKey = KeyCode.Q;
+#endif
+
     // ─────────────────────────────────────────────────────────────────────────
     //  Private
     // ─────────────────────────────────────────────────────────────────────────
 
-    private float nextFireTime = 0f;
+    private float nextFireTime    = 0f;
+    private int   currentAmmoIndex = 0;
 
     // ─────────────────────────────────────────────────────────────────────────
     //  Lifecycle
@@ -122,7 +148,6 @@ public class CannonController : MonoBehaviour
 
     private void Start()
     {
-        // Auto-resolve optional references
         if (muzzleVFX == null && shootPoint != null)
             muzzleVFX = shootPoint.GetComponentInChildren<VisualEffect>();
 
@@ -135,8 +160,37 @@ public class CannonController : MonoBehaviour
 
     private void Update()
     {
+        HandleAmmoSwitch();
+
         if (FireKeyDown() && Time.time >= nextFireTime)
             Fire();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Ammo cycling
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private void HandleAmmoSwitch()
+    {
+        if (ammoTypes == null || ammoTypes.Length <= 1) return;
+
+#if ENABLE_INPUT_SYSTEM
+        var kb = Keyboard.current;
+        if (kb != null && kb[cycleAmmoKey].wasPressedThisFrame)
+            CycleAmmo();
+#else
+        if (Input.GetKeyDown(cycleAmmoKey))
+            CycleAmmo();
+#endif
+    }
+
+    private void CycleAmmo()
+    {
+        if (ammoTypes == null || ammoTypes.Length == 0) return;
+
+        currentAmmoIndex = (currentAmmoIndex + 1) % ammoTypes.Length;
+        CannonAmmoType ammo = ammoTypes[currentAmmoIndex];
+        Debug.Log($"[CannonController] Ammo → {ammo.displayName}");
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -146,6 +200,10 @@ public class CannonController : MonoBehaviour
     public void Fire()
     {
         if (shootPoint == null) return;
+        if (ammoTypes == null || ammoTypes.Length == 0) return;
+
+        CannonAmmoType ammo = ammoTypes[currentAmmoIndex];
+        if (ammo.projectilePrefab == null) return;
 
         nextFireTime = Time.time + reloadTime;
 
@@ -167,66 +225,28 @@ public class CannonController : MonoBehaviour
                 shootPoint.position,
                 ForceMode.Impulse);
 
-        // ── Raycast ───────────────────────────────────────────────────────────
-        Ray ray = new Ray(shootPoint.position, shootPoint.forward);
-        if (Physics.Raycast(ray, out RaycastHit hit, range, hitLayers,
-                            QueryTriggerInteraction.Ignore))
-        {
-            HandleImpact(hit);
-        }
-    }
+        // ── Spawn projectile ──────────────────────────────────────────────────
+        CannonProjectile proj = Instantiate(ammo.projectilePrefab,
+                                            shootPoint.position,
+                                            shootPoint.rotation);
 
-    // ─────────────────────────────────────────────────────────────────────────
-    //  Impact handling
-    // ─────────────────────────────────────────────────────────────────────────
+        // Pass ammo data to the projectile
+        proj.damage                  = ammo.damage;
+        proj.impactRadius            = ammo.impactRadius;
+        proj.explosionForce          = ammo.explosionForce;
+        proj.explosionUpwardModifier = ammo.explosionUpwardModifier;
+        proj.hitLayers               = hitLayers;
+        proj.useExplosionVFX         = ammo.useExplosionVFX;
+        proj.impactVFXPrefab         = ammo.impactVFXPrefab;
+        proj.impactVFXLifetime       = ammo.impactVFXLifetime;
+        proj.explosionVFXPrefab      = ammo.explosionVFXPrefab;
+        proj.explosionVFXLifetime    = ammo.explosionVFXLifetime;
+        proj.lifetime                = ammo.projectileLifetime;
 
-    private void HandleImpact(RaycastHit hit)
-    {
-        Vector3 hitPoint = hit.point;
-
-        // ── Direct hit damage ─────────────────────────────────────────────────
-        hit.collider.SendMessageUpwards("TakeDamage", damage,
-                                        SendMessageOptions.DontRequireReceiver);
-
-        // ── Area effect ───────────────────────────────────────────────────────
-        if (impactRadius > 0f)
-        {
-            Collider[] nearby = Physics.OverlapSphere(hitPoint, impactRadius, hitLayers);
-            foreach (Collider col in nearby)
-            {
-                // Area damage
-                col.SendMessageUpwards("TakeDamage", damage,
-                                       SendMessageOptions.DontRequireReceiver);
-
-                // Explosion force
-                if (explosionForce > 0f)
-                {
-                    Rigidbody rb = col.attachedRigidbody;
-                    if (rb != null)
-                        rb.AddExplosionForce(explosionForce, hitPoint,
-                                             impactRadius, explosionUpwardModifier,
-                                             ForceMode.Impulse);
-                }
-            }
-        }
-
-        // ── Impact VFX ────────────────────────────────────────────────────────
-        if (impactVFXPrefab != null)
-        {
-            VisualEffect fx = Instantiate(impactVFXPrefab, hitPoint,
-                                          Quaternion.LookRotation(hit.normal));
-            fx.Play();
-            Destroy(fx.gameObject, impactVFXLifetime);
-        }
-
-        // ── Explosion VFX ─────────────────────────────────────────────────────
-        if (useExplosionVFX && explosionVFXPrefab != null && impactRadius > 0f)
-        {
-            VisualEffect fx = Instantiate(explosionVFXPrefab, hitPoint,
-                                          Quaternion.identity);
-            fx.Play();
-            Destroy(fx.gameObject, explosionVFXLifetime);
-        }
+        // Launch it
+        Rigidbody rb = proj.GetComponent<Rigidbody>();
+        if (rb != null)
+            rb.linearVelocity = shootPoint.forward * ammo.muzzleVelocity;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -246,8 +266,7 @@ public class CannonController : MonoBehaviour
             default: return false;
         }
 #else
-        int btn = (int)fireButton;
-        return Input.GetMouseButtonDown(btn);
+        return Input.GetMouseButtonDown((int)fireButton);
 #endif
     }
 
@@ -260,17 +279,18 @@ public class CannonController : MonoBehaviour
     {
         if (shootPoint == null) return;
 
-        // Draw fire direction ray
-        Gizmos.color = Color.yellow;
-        Gizmos.DrawRay(shootPoint.position, shootPoint.forward * range);
+        CannonAmmoType ammo = (ammoTypes != null && ammoTypes.Length > 0)
+            ? ammoTypes[currentAmmoIndex] : null;
 
-        // Draw impact radius sphere at range if area effect is on
-        if (impactRadius > 0f)
+        Gizmos.color = Color.yellow;
+        Gizmos.DrawRay(shootPoint.position, shootPoint.forward * 5f);
+
+        if (ammo != null && ammo.impactRadius > 0f)
         {
             Gizmos.color = new Color(1f, 0.4f, 0f, 0.25f);
-            Gizmos.DrawSphere(shootPoint.position + shootPoint.forward * range, impactRadius);
+            Gizmos.DrawSphere(shootPoint.position + shootPoint.forward * 5f, ammo.impactRadius);
             Gizmos.color = new Color(1f, 0.4f, 0f, 0.8f);
-            Gizmos.DrawWireSphere(shootPoint.position + shootPoint.forward * range, impactRadius);
+            Gizmos.DrawWireSphere(shootPoint.position + shootPoint.forward * 5f, ammo.impactRadius);
         }
     }
 #endif

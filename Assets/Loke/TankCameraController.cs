@@ -47,9 +47,17 @@ public class TankCameraController : MonoBehaviour
 
     // ── Zoom ──────────────────────────────────────────────────────────────────
     [Header("Zoom")]
-    [Tooltip("FOV when zoomed in via Z or Left Click toggle.")]
+    [Tooltip("FOV when zoomed in via Z or Left Click toggle - Third Person camera.")]
     [Range(1f, 60f)]
-    public float zoomedFOV = 15f;
+    public float thirdPersonZoomedFOV = 30f;
+
+    [Tooltip("FOV when zoomed in via Z or Left Click toggle - Gun Sight camera.")]
+    [Range(1f, 60f)]
+    public float gunSightZoomedFOV = 10f;
+
+    [Tooltip("FOV when zoomed in via Z or Left Click toggle - LMG Sight camera.")]
+    [Range(1f, 60f)]
+    public float lmgSightZoomedFOV = 15f;
 
     [Tooltip("How many FOV degrees each scroll wheel tick changes.")]
     [Range(0.5f, 15f)]
@@ -166,11 +174,11 @@ public class TankCameraController : MonoBehaviour
         scroll = Input.GetAxis("Mouse ScrollWheel") * 120f;
 #endif
 
-        // Z / Left Click: toggle between default FOV and zoomed FOV
+        // Z / Left Click: toggle between default FOV and this camera's zoomed FOV
         if (togglePressed)
         {
             toggleZoomed = !toggleZoomed;
-            currentFOV   = toggleZoomed ? zoomedFOV : defaultFOV[(int)currentMode];
+            currentFOV   = toggleZoomed ? GetZoomedFOV() : defaultFOV[(int)currentMode];
             ApplyFOV();
         }
 
@@ -182,6 +190,16 @@ public class TankCameraController : MonoBehaviour
             // Keep toggle state in sync: if scrolled all the way out, un-zoom
             toggleZoomed = currentFOV < defaultFOV[(int)currentMode] - 0.5f;
             ApplyFOV();
+        }
+    }
+
+    private float GetZoomedFOV()
+    {
+        switch (currentMode)
+        {
+            case TankCameraMode.GunSight:  return gunSightZoomedFOV;
+            case TankCameraMode.LMGSight:  return lmgSightZoomedFOV;
+            default:                       return thirdPersonZoomedFOV;
         }
     }
 
