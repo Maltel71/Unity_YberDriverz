@@ -155,9 +155,9 @@ public class TankController : MonoBehaviour
 
     // ── Lateral Friction ──────────────────────────────────────────────────────
     [Header("Lateral Friction")]
+    [Range(0f, 1f)]
     [Tooltip("How strongly each grounded wheel resists sideways sliding. " +
              "Lower = more drift and slide. 0.1-0.25 for drifty, 0.4-0.8 for grippy.")]
-    [Range(0f, 1f)]
     public float lateralFriction = 0.18f;
 
     // ── Input ─────────────────────────────────────────────────────────────────
@@ -294,7 +294,8 @@ public class TankController : MonoBehaviour
         // As you gain speed the torque grows, steering the tank naturally like a car.
         // The front wheel angle is what steers - the lateral friction on angled wheels
         // (see ProcessWheelSide) generates the actual cornering force per wheel.
-        float steeringTorque = steer * Mathf.Abs(forwardSpeedMS) * turnForce * turnScalar;
+        // Signed forwardSpeedMS (no Abs) so steering flips correctly when reversing.
+        float steeringTorque = steer * forwardSpeedMS * turnForce * turnScalar;
         rb.AddTorque(transform.up * steeringTorque, ForceMode.Force);
 
         // ── Differential: only for pivot turns when stationary ────────────────
