@@ -220,8 +220,18 @@ public class CannonController : MonoBehaviour
 
     // ── Reload ────────────────────────────────────────────────────────────────
     [Header("Reload")]
-    [Tooltip("Time in seconds between shots.")]
+    [Tooltip("Base time in seconds between shots.\n" +
+             "ModuleManager multiplies this by GetReloadMultiplier() at runtime\n" +
+             "(Loader damaged = slower reload; Loader incapacitated = cannot reload).")]
     public float reloadTime = 3f;
+
+    // ── Module System ─────────────────────────────────────────────────────────
+    [Header("Module System")]
+    [Tooltip("Optional. When assigned:\n" +
+             "  - CanFire() is checked before each shot (Gunner/crew state).\n" +
+             "  - reloadTime is scaled by GetReloadMultiplier() (Loader state).\n" +
+             "Leave empty to disable module-based firing restrictions.")]
+    public ModuleManager moduleManager;
 
     // ── Input ─────────────────────────────────────────────────────────────────
     [Header("Input")]
@@ -263,7 +273,9 @@ public class CannonController : MonoBehaviour
     {
         HandleAmmoSwitch();
 
-        if (FireKeyDown() && Time.time >= nextFireTime)
+        // Gate on module system: Gunner incapacitated or gun destroyed = cannot fire
+        bool moduleAllowsFire = moduleManager == null || moduleManager.CanFire();
+        if (FireKeyDown() && Time.time >= nextFireTime && moduleAllowsFire)
             Fire();
     }
 
@@ -307,7 +319,9 @@ public class CannonController : MonoBehaviour
         CannonAmmoType ammo = ammoTypes[currentAmmoIndex];
         if (ammo.projectilePrefab == null) return;
 
-        nextFireTime = Time.time + reloadTime;
+        // Scale reload time by Loader module / crew state
+        float reloadMult = moduleManager != null ? moduleManager.GetReloadMultiplier() : 1f;
+        nextFireTime = Time.time + reloadTime * reloadMult;
 
         // ── Muzzle flash ──────────────────────────────────────────────────────
         if (muzzleVFX != null)

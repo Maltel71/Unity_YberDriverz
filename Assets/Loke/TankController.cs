@@ -175,6 +175,13 @@ public class TankController : MonoBehaviour
     public KeyCode brakeKey     = KeyCode.Space;
 #endif
 
+    // ── Module System ─────────────────────────────────────────────────────────
+    [Header("Module System")]
+    [Tooltip("Optional. When assigned, mobility is scaled by the module system:\n" +
+             "Engine / Driver / Tracks damage reduces motorForce and turnForce.\n" +
+             "Leave empty to disable module-based mobility penalties.")]
+    public ModuleManager moduleManager;
+
     // ── Debug ─────────────────────────────────────────────────────────────────
     [Header("Debug")]
     public bool showSpeedGizmo  = true;
@@ -296,14 +303,26 @@ public class TankController : MonoBehaviour
         // (see ProcessWheelSide) generates the actual cornering force per wheel.
         // Signed forwardSpeedMS (no Abs) so steering flips correctly when reversing.
         float steeringTorque = steer * forwardSpeedMS * turnForce * turnScalar;
-        rb.AddTorque(transform.up * steeringTorque, ForceMode.Force);
+
+        // ── Module system: mobility penalty from Engine / Driver / Tracks ────────
+        // GetMobilityMultiplier() returns 0–1 (1 = fully operational).
+        // CanMove() returns false when any critical mobility module is destroyed.
+        float mobilityMult = 1f;
+        if (moduleManager != null)
+        {
+            if (!moduleManager.CanMove()) mobilityMult = 0f;
+            else mobilityMult = moduleManager.GetMobilityMultiplier();
+        }
+
+        // Apply steering torque scaled by mobility (damaged engine = sluggish turn)
+        rb.AddTorque(transform.up * steeringTorque * mobilityMult, ForceMode.Force);
 
         // ── Differential: only for pivot turns when stationary ────────────────
-        float driveForce  = throttle * motorForce * driveScalar;
+        float driveForce   = throttle * motorForce * driveScalar * mobilityMult;
         bool  isStationary = speed < 0.5f;
-        float diffForce   = (allowPivotTurn && isStationary)
-                          ? steer * turnForce * 0.4f
-                          : 0f;
+        float diffForce    = (allowPivotTurn && isStationary)
+                           ? steer * turnForce * 0.4f * mobilityMult
+                           : 0f;
 
         ProcessWheelSide(leftWheels,  driveForce,  diffForce, brake);
         ProcessWheelSide(rightWheels, driveForce, -diffForce, brake);

@@ -13,8 +13,8 @@ GameObject:
   - component: {fileID: 4715568698961291579}
   - component: {fileID: 6821600928275780736}
   - component: {fileID: 2947417925536428266}
-  - component: {fileID: 4545400910042971965}
   - component: {fileID: 8131084858208244793}
+  - component: {fileID: 4544530336481270961}
   m_Layer: 0
   m_Name: HE
   m_TagString: Untagged
@@ -143,31 +143,6 @@ CapsuleCollider:
   m_Height: 1.14
   m_Direction: 2
   m_Center: {x: 0, y: 0, z: 0.26769662}
---- !u!114 &4545400910042971965
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 3187591771805028666}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 3ad04b01519c0d74c8faa0292aa11ea4, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::CannonProjectile
-  damage: 0
-  impactRadius: 0
-  explosionForce: 0
-  explosionUpwardModifier: 0
-  hitLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  useExplosionVFX: 0
-  impactVFXPrefab: {fileID: 0}
-  impactVFXLifetime: 0
-  explosionVFXPrefab: {fileID: 0}
-  explosionVFXLifetime: 0
-  lifetime: 10
 --- !u!96 &8131084858208244793
 TrailRenderer:
   serializedVersion: 3
@@ -278,3 +253,36 @@ TrailRenderer:
   m_Autodestruct: 0
   m_Emitting: 1
   m_ApplyActiveColorSpace: 1
+--- !u!114 &4544530336481270961
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3187591771805028666}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a1bece97438ff9340b7fbcd146427a77, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::CannonProjectile
+  damage: 80
+  impactRadius: 0
+  explosionForce: 0
+  explosionUpwardModifier: 1
+  hitLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  useExplosionVFX: 0
+  impactVFXPrefab: {fileID: 0}
+  impactVFXLifetime: 2
+  explosionVFXPrefab: {fileID: 0}
+  explosionVFXLifetime: 3
+  lifetime: 10
+  shellType: 0
+  caliber: 75
+  muzzleVelocity: 800
+  basePenetrationMM: 100
+  normalizationDeg: 5
+  ricochetAngleDeg: 70
+  apheBlastDamage: 150
+  apheBlastRadius: 3
