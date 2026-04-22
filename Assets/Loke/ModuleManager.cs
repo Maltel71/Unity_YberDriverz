@@ -141,6 +141,12 @@ public class ModuleManager : MonoBehaviour
     [Range(1, 6)]
     public int minimumActiveCrew = 1;
 
+    [Header("Hit Notification UI")]
+    [Tooltip("Tick ON for the player's own tank.\n" +
+             "When true, this tank's destructions will NOT appear in the hit notification HUD.\n" +
+             "Leave false (default) on all enemy tanks.")]
+    public bool isPlayerTank = false;
+
     // ── Unity Events ──────────────────────────────────────────────────────────
     [Header("Events")]
     [Tooltip("Fired when the tank is knocked out from any cause.")]
@@ -425,6 +431,10 @@ public class ModuleManager : MonoBehaviour
         onModuleDestroyedEvent?.Invoke(mod);
         tankHealth?.OnModuleDestroyedCallback(mod.displayName);
 
+        // Show HUD notification only for enemy tanks (isPlayerTank = false)
+        if (!isPlayerTank)
+            HitNotificationUI.Instance?.ShowModuleDestroyed(mod.displayName, mod.moduleType);
+
         if (mod.catastrophicOnDestruction)
             KnockOut($"catastrophic module: {mod.displayName}");
         else
@@ -450,6 +460,11 @@ public class ModuleManager : MonoBehaviour
     public void OnCrewStatusChanged(CrewMember member)
     {
         onCrewStatusChangedEvent?.Invoke(member);
+
+        // Show HUD notification only for enemy crew going KIA on enemy tanks
+        if (!isPlayerTank && member.Status == CrewStatus.KIA)
+            HitNotificationUI.Instance?.ShowCrewKIA(member.displayName, member.role);
+
         CheckKnockOut();
     }
 

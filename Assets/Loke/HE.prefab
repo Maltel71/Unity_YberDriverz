@@ -15,7 +15,7 @@ GameObject:
   - component: {fileID: 2947417925536428266}
   - component: {fileID: 8131084858208244793}
   - component: {fileID: 4544530336481270961}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: HE
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -286,3 +286,4 @@ MonoBehaviour:
   ricochetAngleDeg: 70
   apheBlastDamage: 150
   apheBlastRadius: 3
+  sweepOvershoot: 0.1

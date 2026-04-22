@@ -51,7 +51,10 @@ VisualEffect:
   m_ResourceVersion: 1
   m_PropertySheet:
     m_Float:
-      m_Array: []
+      m_Array:
+      - m_Value: 0
+        m_Name: Alpha
+        m_Overridden: 1
     m_Vector2f:
       m_Array:
       - m_Value: {x: 5, y: 10}
@@ -109,6 +112,32 @@ VisualEffect:
           m_PostInfinity: 2
           m_RotationOrder: 4
         m_Name: Size overlifetime
+        m_Overridden: 1
+      - m_Value:
+          serializedVersion: 2
+          m_Curve:
+          - serializedVersion: 3
+            time: 0
+            value: 0
+            inSlope: 0
+            outSlope: 1
+            tangentMode: 0
+            weightedMode: 0
+            inWeight: 0
+            outWeight: 0
+          - serializedVersion: 3
+            time: 1
+            value: 1
+            inSlope: 1
+            outSlope: 0
+            tangentMode: 0
+            weightedMode: 0
+            inWeight: 0
+            outWeight: 0
+          m_PreInfinity: 2
+          m_PostInfinity: 2
+          m_RotationOrder: 4
+        m_Name: Alpha_Curve
         m_Overridden: 1
     m_Gradient:
       m_Array:
