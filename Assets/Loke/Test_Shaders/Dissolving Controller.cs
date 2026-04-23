@@ -1,10 +1,12 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
 using System.Collections;
+using UnityEngine.VFX;
 
 public class DissolvingController : MonoBehaviour
 {
     public MeshRenderer MeshRender;
+    public VisualEffect VFXGraph;
     public float dissolveRate = 0.0125f;
     public float refreshRate = 0.025f;
 
@@ -26,6 +28,11 @@ public class DissolvingController : MonoBehaviour
 
     IEnumerator DissolveCo()
     {
+        if (VFXGraph != null)
+        {
+            VFXGraph.Play();
+        }
+
         if (Materials.Length > 0)
         {
             float counter = 0;
