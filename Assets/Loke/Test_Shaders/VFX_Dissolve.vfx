@@ -319,7 +319,7 @@ VisualEffectResource:
     m_UpdateMode: 0
     m_PreWarmDeltaTime: 0.05
     m_PreWarmStepCount: 0
-    m_InitialEventName: OnPlay
+    m_InitialEventName: Burn
     m_InstancingMode: 0
     m_InstancingCapacity: 64
 --- !u!114 &8926484042661614608
@@ -734,7 +734,7 @@ MonoBehaviour:
   m_InputSlots:
   - {fileID: 8926484042661614682}
   m_OutputSlots: []
-  m_Label: Render Quad
+  m_Label: Bright
   m_Data: {fileID: 8926484042661614627}
   m_InputFlowSlot:
   - link:
@@ -759,7 +759,7 @@ MonoBehaviour:
   flipbookBlendFrames: 0
   flipbookMotionVectors: 0
   useSoftParticle: 0
-  vfxSystemSortPriority: 0
+  vfxSystemSortPriority: 1
   sort: 0
   sortMode: 0
   revertSorting: 0
@@ -7901,7 +7901,7 @@ MonoBehaviour:
   m_InputSlots:
   - {fileID: 8926484042661615264}
   m_OutputSlots: []
-  m_Label: Render Quad
+  m_Label: Dark
   m_Data: {fileID: 8926484042661615232}
   m_InputFlowSlot:
   - link:

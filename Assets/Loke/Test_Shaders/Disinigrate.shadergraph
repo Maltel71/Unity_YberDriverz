@@ -32,6 +32,9 @@
         },
         {
             "m_Id": "f4a0ecb9469644f8ab605afdd7fc478d"
+        },
+        {
+            "m_Id": "7b1ac23f47c34116b13305601082e6ba"
         }
     ],
     "m_Keywords": [],
@@ -1802,6 +1805,46 @@
 }
 
 {
+    "m_SGVersion": 1,
+    "m_Type": "UnityEditor.ShaderGraph.Internal.Vector1ShaderProperty",
+    "m_ObjectId": "7b1ac23f47c34116b13305601082e6ba",
+    "m_Guid": {
+        "m_GuidSerialized": "a8d170e4-6e53-41fc-858a-34b120616c4a"
+    },
+    "m_Name": "Emmesive Strenght",
+    "m_DefaultRefNameVersion": 1,
+    "m_RefNameGeneratedByDisplayName": "Emmesive Strenght",
+    "m_DefaultReferenceName": "_Emmesive_Strenght",
+    "m_OverrideReferenceName": "",
+    "m_GeneratePropertyBlock": true,
+    "m_UseCustomSlotLabel": false,
+    "m_CustomSlotLabel": "",
+    "m_DismissedVersion": 0,
+    "m_Precision": 0,
+    "overrideHLSLDeclaration": false,
+    "hlslDeclarationOverride": 0,
+    "m_Hidden": false,
+    "m_PerRendererData": false,
+    "m_customAttributes": [],
+    "m_Value": 0.0,
+    "m_FloatType": 0,
+    "m_RangeValues": {
+        "x": 0.0,
+        "y": 1.0
+    },
+    "m_SliderType": 0,
+    "m_SliderPower": 3.0,
+    "m_EnumType": 0,
+    "m_CSharpEnumString": "",
+    "m_EnumNames": [
+        "Default"
+    ],
+    "m_EnumValues": [
+        0
+    ]
+}
+
+{
     "m_SGVersion": 0,
     "m_Type": "UnityEditor.ShaderGraph.PositionMaterialSlot",
     "m_ObjectId": "7f9affc017134a679a20f670b10f5a44",
@@ -2561,6 +2604,9 @@
         },
         {
             "m_Id": "f4a0ecb9469644f8ab605afdd7fc478d"
+        },
+        {
+            "m_Id": "7b1ac23f47c34116b13305601082e6ba"
         }
     ]
 }
